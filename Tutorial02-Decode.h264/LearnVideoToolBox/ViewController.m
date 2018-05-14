@@ -19,6 +19,43 @@
 
 const uint8_t lyStartCode[4] = {0, 0, 0, 1};
 
+/*
+ 概念介绍
+ 
+ CVPixelBuffer
+ 包含未压缩的像素数据，包括图像宽度、高度等；
+ 
+ CVPixelBufferPool
+ CVPixelBuffer的缓冲池，因为CVPixelBuffer的创建和销毁代价很大；
+ 
+ pixelBufferAttributes
+ CFDictionary包括宽高、像素格式（RGBA、YUV）、使用场景（OpenGL ES、Core Animation）
+ 
+ CMTime
+ 64位的value，32位的scale，media的时间格式；
+ 
+ CMVideoFormatDescription
+ video的格式，包括宽高、颜色空间、编码格式等；对于H.264的视频，PPS和SPS的数据也在这里；
+ 
+ CMBlockBuffer
+ 未压缩的图像数据；
+ 
+ CMSampleBuffer
+ 存放一个或者多个压缩或未压缩的媒体文件；
+ 
+ CMClock
+ 时间源：A timing source object.
+ 
+ CMTimebase
+ 时间控制器，可以设置rate和time：A timebase represents a timeline that clients can control by setting the rate and time. Each timebase has either a master clock or a master timebase. The rate of the timebase is expressed relative to its master.
+ 
+ 当遇到IDR帧时，更合适的做法是通过
+ VTDecompressionSessionCanAcceptFormatDescription判断原来的session是否能接受新的SPS和PPS，如果不能再新建session。
+ 
+ WWDC的视频：https://developer.apple.com/videos/play/wwdc2014/513/
+ OpenGLES文集：https://www.jianshu.com/nb/2135411
+ */
+
 @implementation ViewController
 {
     dispatch_queue_t mDecodeQueue;
@@ -145,10 +182,11 @@ void didDecompress(void *decompressionOutputRefCon, void *sourceFrameRefCon, OSS
     if (inputStream){
         dispatch_sync(mDecodeQueue, ^{
             [self readPacket];
-            if(packetBuffer == NULL || packetSize == 0) {
+            if (packetBuffer == NULL || packetSize == 0) {
                 [self onInputEnd];
                 return ;
             }
+            //替换头字节长度
             uint32_t nalSize = (uint32_t)(packetSize - 4);
             uint32_t *pNalSize = (uint32_t *)packetBuffer;
             *pNalSize = CFSwapInt32HostToBig(nalSize);
@@ -182,6 +220,7 @@ void didDecompress(void *decompressionOutputRefCon, void *sourceFrameRefCon, OSS
             
             if(pixelBuffer) {
                 dispatch_async(dispatch_get_main_queue(), ^{
+                    //显示解码的结果
                     [self.mOpenGLView displayPixelBuffer:pixelBuffer];
                     CVPixelBufferRelease(pixelBuffer);
                 });
@@ -191,18 +230,18 @@ void didDecompress(void *decompressionOutputRefCon, void *sourceFrameRefCon, OSS
     }
 }
 
-
--(CVPixelBufferRef)decode {
-    
+- (CVPixelBufferRef)decode {
     CVPixelBufferRef outputPixelBuffer = NULL;
     if (mDecodeSession) {
+        //用CMBlockBuffer把NALUnit包装起来
         CMBlockBufferRef blockBuffer = NULL;
-        OSStatus status  = CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault,
+        OSStatus status = CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault,
                                                               (void*)packetBuffer, packetSize,
                                                               kCFAllocatorNull,
                                                               NULL, 0, packetSize,
                                                               0, &blockBuffer);
-        if(status == kCMBlockBufferNoErr) {
+        if (status == kCMBlockBufferNoErr) {
+            //创建CMSampleBuffer
             CMSampleBufferRef sampleBuffer = NULL;
             const size_t sampleSizeArray[] = {packetSize};
             status = CMSampleBufferCreateReady(kCFAllocatorDefault,
@@ -211,6 +250,7 @@ void didDecompress(void *decompressionOutputRefCon, void *sourceFrameRefCon, OSS
                                                1, 0, NULL, 1, sampleSizeArray,
                                                &sampleBuffer);
             if (status == kCMBlockBufferNoErr && sampleBuffer) {
+                //传入CMSampleBuffer
                 VTDecodeFrameFlags flags = 0;
                 VTDecodeInfoFlags flagOut = 0;
                 // 默认是同步操作。
@@ -242,6 +282,7 @@ void didDecompress(void *decompressionOutputRefCon, void *sourceFrameRefCon, OSS
 
 - (void)initVideoToolBox {
     if (!mDecodeSession) {
+        //把SPS和PPS包装成CMVideoFormatDescription
         const uint8_t* parameterSetPointers[2] = {mSPS, mPPS};
         const size_t parameterSetSizes[2] = {mSPSSize, mPPSSize};
         OSStatus status = CMVideoFormatDescriptionCreateFromH264ParameterSets(kCFAllocatorDefault,
@@ -250,7 +291,7 @@ void didDecompress(void *decompressionOutputRefCon, void *sourceFrameRefCon, OSS
                                                                               parameterSetSizes,
                                                                               4, //nal start code size
                                                                               &mFormatDescription);
-        if(status == noErr) {
+        if (status == noErr) {
             CFDictionaryRef attrs = NULL;
             const void *keys[] = { kCVPixelBufferPixelFormatTypeKey };
             //      kCVPixelFormatType_420YpCbCr8Planar is YUV420
