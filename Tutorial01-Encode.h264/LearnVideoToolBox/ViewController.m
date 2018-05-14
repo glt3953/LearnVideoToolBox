@@ -127,15 +127,15 @@
 }
 
 - (void)initVideoToolBox {
-    dispatch_sync(mEncodeQueue  , ^{
+    dispatch_sync(mEncodeQueue, ^{
         frameID = 0;
         int width = 480, height = 640;
-        OSStatus status = VTCompressionSessionCreate(NULL, width, height, kCMVideoCodecType_H264, NULL, NULL, NULL, didCompressH264, (__bridge void *)(self),  &EncodingSession);
+        //创建编码session
+        OSStatus status = VTCompressionSessionCreate(NULL, width, height, kCMVideoCodecType_H264, NULL, NULL, NULL, didCompressH264, (__bridge void *)(self), &EncodingSession);
         NSLog(@"H264: VTCompressionSessionCreate %d", (int)status);
-        if (status != 0)
-        {
+        if (status != 0) {
             NSLog(@"H264: Unable to create a H264 session");
-            return ;
+            return;
         }
         
         // 设置实时编码输出（避免延迟）
@@ -144,14 +144,13 @@
         
         // 设置关键帧（GOPsize)间隔
         int frameInterval = 10;
-        CFNumberRef  frameIntervalRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &frameInterval);
+        CFNumberRef frameIntervalRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &frameInterval);
         VTSessionSetProperty(EncodingSession, kVTCompressionPropertyKey_MaxKeyFrameInterval, frameIntervalRef);
         
         // 设置期望帧率
         int fps = 10;
-        CFNumberRef  fpsRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &fps);
+        CFNumberRef fpsRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &fps);
         VTSessionSetProperty(EncodingSession, kVTCompressionPropertyKey_ExpectedFrameRate, fpsRef);
-        
         
         //设置码率，均值，单位是byte
         int bitRate = width * height * 3 * 4 * 8;
@@ -168,13 +167,12 @@
     });
 }
 
-
-- (void) encode:(CMSampleBufferRef )sampleBuffer
-{
+- (void)encode:(CMSampleBufferRef)sampleBuffer {
     CVImageBufferRef imageBuffer = (CVImageBufferRef)CMSampleBufferGetImageBuffer(sampleBuffer);
     // 帧时间，如果不设置会导致时间轴过长。
     CMTime presentationTimeStamp = CMTimeMake(frameID++, 1000);
     VTEncodeInfoFlags flags;
+    //传入需要编码的视频帧
     OSStatus statusCode = VTCompressionSessionEncodeFrame(EncodingSession,
                                                           imageBuffer,
                                                           presentationTimeStamp,
@@ -182,10 +180,7 @@
                                                           NULL, NULL, &flags);
     if (statusCode != noErr) {
         NSLog(@"H264: VTCompressionSessionEncodeFrame failed with %d", (int)statusCode);
-        
-        VTCompressionSessionInvalidate(EncodingSession);
-        CFRelease(EncodingSession);
-        EncodingSession = NULL;
+        [self destroyAndReleaseEncodingSession];
         return;
     }
     NSLog(@"H264: VTCompressionSessionEncodeFrame Success");
@@ -204,28 +199,26 @@ void didCompressH264(void *outputCallbackRefCon, void *sourceFrameRefCon, OSStat
     }
     ViewController* encoder = (__bridge ViewController*)outputCallbackRefCon;
     
-    bool keyframe = !CFDictionaryContainsKey( (CFArrayGetValueAtIndex(CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, true), 0)), kCMSampleAttachmentKey_NotSync);
+    bool keyframe = !CFDictionaryContainsKey((CFArrayGetValueAtIndex(CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, true), 0)), kCMSampleAttachmentKey_NotSync);
     // 判断当前帧是否为关键帧
     // 获取sps & pps数据
-    if (keyframe)
-    {
+    if (keyframe) {
         CMFormatDescriptionRef format = CMSampleBufferGetFormatDescription(sampleBuffer);
         size_t sparameterSetSize, sparameterSetCount;
         const uint8_t *sparameterSet;
+        //取得SPS
         OSStatus statusCode = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, 0, &sparameterSet, &sparameterSetSize, &sparameterSetCount, 0 );
-        if (statusCode == noErr)
-        {
+        if (statusCode == noErr) {
             // Found sps and now check for pps
             size_t pparameterSetSize, pparameterSetCount;
             const uint8_t *pparameterSet;
+            //取得PPS
             OSStatus statusCode = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, 1, &pparameterSet, &pparameterSetSize, &pparameterSetCount, 0 );
-            if (statusCode == noErr)
-            {
+            if (statusCode == noErr) {
                 // Found pps
                 NSData *sps = [NSData dataWithBytes:sparameterSet length:sparameterSetSize];
                 NSData *pps = [NSData dataWithBytes:pparameterSet length:pparameterSetSize];
-                if (encoder)
-                {
+                if (encoder) {
                     [encoder gotSpsPps:sps pps:pps];
                 }
             }
@@ -258,8 +251,7 @@ void didCompressH264(void *outputCallbackRefCon, void *sourceFrameRefCon, OSStat
     }
 }
 
-- (void)gotSpsPps:(NSData*)sps pps:(NSData*)pps
-{
+- (void)gotSpsPps:(NSData*)sps pps:(NSData*)pps {
     NSLog(@"gotSpsPps %d %d", (int)[sps length], (int)[pps length]);
     const char bytes[] = "\x00\x00\x00\x01";
     size_t length = (sizeof bytes) - 1; //string literals have implicit trailing '\0'
@@ -270,6 +262,7 @@ void didCompressH264(void *outputCallbackRefCon, void *sourceFrameRefCon, OSStat
     [fileHandle writeData:pps];
     
 }
+
 - (void)gotEncodedData:(NSData*)data isKeyFrame:(BOOL)isKeyFrame
 {
     NSLog(@"gotEncodedData %d", (int)[data length]);
@@ -286,10 +279,16 @@ void didCompressH264(void *outputCallbackRefCon, void *sourceFrameRefCon, OSStat
 - (void)EndVideoToolBox
 {
     VTCompressionSessionCompleteFrames(EncodingSession, kCMTimeInvalid);
+    [self destroyAndReleaseEncodingSession];
+}
+
+//销毁并释放session
+- (void)destroyAndReleaseEncodingSession {
+    //销毁session
     VTCompressionSessionInvalidate(EncodingSession);
+    //释放session
     CFRelease(EncodingSession);
     EncodingSession = NULL;
 }
-
 
 @end
