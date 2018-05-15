@@ -43,7 +43,8 @@
  *
  *  @param sampleBuffer 音频
  */
-- (void) setupEncoderFromSampleBuffer:(CMSampleBufferRef)sampleBuffer {
+- (void)setupEncoderFromSampleBuffer:(CMSampleBufferRef)sampleBuffer {
+    //AudioStreamBasicDescription是输出流的结构体描述
     AudioStreamBasicDescription inAudioStreamBasicDescription = *CMAudioFormatDescriptionGetStreamBasicDescription((CMAudioFormatDescriptionRef)CMSampleBufferGetFormatDescription(sampleBuffer));
     
     AudioStreamBasicDescription outAudioStreamBasicDescription = {0}; // 初始化输出流的结构体描述为0. 很重要。
@@ -60,6 +61,7 @@
                                           getAudioClassDescriptionWithType:kAudioFormatMPEG4AAC
                                           fromManufacturer:kAppleSoftwareAudioCodecManufacturer]; //软编
     
+    //创建转换器
     OSStatus status = AudioConverterNewSpecific(&inAudioStreamBasicDescription, &outAudioStreamBasicDescription, 1, description, &_audioConverter); // 创建转换器
     if (status != 0) {
         NSLog(@"setup converter: %d", (int)status);
@@ -140,7 +142,7 @@ OSStatus inInputDataProc(AudioConverterRef inAudioConverter, UInt32 *ioNumberDat
 /**
  *  填充PCM到缓冲区
  */
-- (size_t) copyPCMSamplesIntoBuffer:(AudioBufferList*)ioData {
+- (size_t)copyPCMSamplesIntoBuffer:(AudioBufferList*)ioData {
     size_t originalBufferSize = _pcmBufferSize;
     if (!originalBufferSize) {
         return 0;
@@ -153,14 +155,16 @@ OSStatus inInputDataProc(AudioConverterRef inAudioConverter, UInt32 *ioNumberDat
 }
 
 
-- (void) encodeSampleBuffer:(CMSampleBufferRef)sampleBuffer completionBlock:(void (^)(NSData * encodedData, NSError* error))completionBlock {
+- (void)encodeSampleBuffer:(CMSampleBufferRef)sampleBuffer completionBlock:(void (^)(NSData * encodedData, NSError* error))completionBlock {
     CFRetain(sampleBuffer);
     dispatch_async(_encoderQueue, ^{
         if (!_audioConverter) {
             [self setupEncoderFromSampleBuffer:sampleBuffer];
         }
+        //获取到CMSampleBufferRef里面的CMBlockBufferRef
         CMBlockBufferRef blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer);
         CFRetain(blockBuffer);
+        //获取到_pcmBufferSize和_pcmBuffer
         OSStatus status = CMBlockBufferGetDataPointer(blockBuffer, 0, NULL, &_pcmBufferSize, &_pcmBuffer);
         NSError *error = nil;
         if (status != kCMBlockBufferNoErr) {
@@ -180,6 +184,7 @@ OSStatus inInputDataProc(AudioConverterRef inAudioConverter, UInt32 *ioNumberDat
         status = AudioConverterFillComplexBuffer(_audioConverter, inInputDataProc, (__bridge void *)(self), &ioOutputDataPacketSize, &outAudioBufferList, outPacketDescription);
         NSData *data = nil;
         if (status == 0) {
+            //AudioConverterFillComplexBuffer返回的是AAC原始码流，需要在AAC每帧添加ADTS头，调用adtsDataForPacketLength方法生成，最后把数据写入audioFileHandle的文件。
             NSData *rawAAC = [NSData dataWithBytes:outAudioBufferList.mBuffers[0].mData length:outAudioBufferList.mBuffers[0].mDataByteSize];
             NSData *adtsHeader = [self adtsDataForPacketLength:rawAAC.length];
             NSMutableData *fullData = [NSMutableData dataWithData:adtsHeader];
@@ -209,7 +214,7 @@ OSStatus inInputDataProc(AudioConverterRef inAudioConverter, UInt32 *ioNumberDat
  *  See: http://wiki.multimedia.cx/index.php?title=ADTS
  *  Also: http://wiki.multimedia.cx/index.php?title=MPEG-4_Audio#Channel_Configurations
  **/
-- (NSData*) adtsDataForPacketLength:(NSUInteger)packetLength {
+- (NSData *)adtsDataForPacketLength:(NSUInteger)packetLength {
     int adtsLength = 7;
     char *packet = malloc(sizeof(char) * adtsLength);
     // Variables Recycled by addADTStoPacket
@@ -221,7 +226,7 @@ OSStatus inInputDataProc(AudioConverterRef inAudioConverter, UInt32 *ioNumberDat
     // fill in ADTS data
     packet[0] = (char)0xFF; // 11111111     = syncword
     packet[1] = (char)0xF9; // 1111 1 00 1  = syncword MPEG-2 Layer CRC
-    packet[2] = (char)(((profile-1)<<6) + (freqIdx<<2) +(chanCfg>>2));
+    packet[2] = (char)(((profile-1)<<6) + (freqIdx<<2) + (chanCfg>>2));
     packet[3] = (char)(((chanCfg&3)<<6) + (fullLength>>11));
     packet[4] = (char)((fullLength&0x7FF) >> 3);
     packet[5] = (char)(((fullLength&7)<<5) + 0x1F);
@@ -229,6 +234,5 @@ OSStatus inInputDataProc(AudioConverterRef inAudioConverter, UInt32 *ioNumberDat
     NSData *data = [NSData dataWithBytesNoCopy:packet length:adtsLength freeWhenDone:YES];
     return data;
 }
-
 
 @end

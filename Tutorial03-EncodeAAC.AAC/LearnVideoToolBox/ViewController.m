@@ -11,6 +11,16 @@
 #import <AVFoundation/AVFoundation.h>
 #import <VideoToolbox/VideoToolbox.h>
 
+/*
+ https://www.jianshu.com/p/a671f5b17fc1
+ 采样后的数据大小 = 采样率值×采样大小值×声道数 bps。
+ 一个采样率为44.1KHz，采样大小为16bit，双声道的PCM编码的WAV文件，它的数据速率=44.1K×16×2 bps=1411.2 Kbps= 176.4 KB/s。
+ AAC（Advanced Audio Coding），中文名：高级音频编码，出现于1997年，基于MPEG-2的音频编码技术。由Fraunhofer IIS、杜比实验室、AT&T、Sony等公司共同开发，目的是取代MP3格式。
+ AAC音频格式有ADIF和ADTS：
+ ADIF：Audio Data Interchange Format 音频数据交换格式。这种格式的特征是可以确定的找到这个音频数据的开始，不需进行在音频数据流中间开始的解码，即它的解码必须在明确定义的开始处进行。故这种格式常用在磁盘文件中。
+ ADTS：Audio Data Transport Stream 音频数据传输流。这种格式的特征是它是一个有同步字的比特流，解码可以在这个流中任何位置开始。它的特征类似于mp3数据流格式。
+ */
+
 @interface ViewController () <AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate>
 @property (nonatomic , strong) UILabel  *mLabel;
 @property (nonatomic , strong) AVCaptureSession *mCaptureSession; //负责输入和输出设备之间的数据传递
@@ -129,12 +139,10 @@
     [[NSFileManager defaultManager] createFileAtPath:file contents:nil attributes:nil];
     fileHandle = [NSFileHandle fileHandleForWritingAtPath:file];
     
-    
     NSString *audioFile = [[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) lastObject] stringByAppendingPathComponent:@"abc.aac"];
     [[NSFileManager defaultManager] removeItemAtPath:audioFile error:nil];
     [[NSFileManager defaultManager] createFileAtPath:audioFile contents:nil attributes:nil];
     audioFileHandle = [NSFileHandle fileHandleForWritingAtPath:audioFile];
-    
     
     [self initVideoToolBox];
     [self.mCaptureSession startRunning];
