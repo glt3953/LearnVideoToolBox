@@ -19,7 +19,7 @@ const uint32_t CONST_BUFFER_SIZE = 0x10000;
 @implementation LYPlayer
 {
     AudioUnit audioUnit;
-    AudioBufferList *buffList;
+    AudioBufferList *buffList; //音频的缓存数据结构
     
     NSInputStream *inputSteam;
 }
@@ -114,7 +114,7 @@ const uint32_t CONST_BUFFER_SIZE = 0x10000;
     }
     
     
-    // callback
+    // callback 回调的结构体
     AURenderCallbackStruct playCallback;
     playCallback.inputProc = PlayCallback;
     playCallback.inputProcRefCon = (__bridge void *)self;
@@ -125,7 +125,7 @@ const uint32_t CONST_BUFFER_SIZE = 0x10000;
                          &playCallback,
                          sizeof(playCallback));
     
-    
+    //初始化是一个耗时的操作，需要分配buffer、申请系统资源等
     OSStatus result = AudioUnitInitialize(audioUnit);
     NSLog(@"result %d", result);
 }
